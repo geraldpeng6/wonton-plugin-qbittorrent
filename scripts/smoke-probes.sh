@@ -1,16 +1,89 @@
-# scripts/smoke.sh 的一项一项探测，跟着插件走。没写的项会 FAIL 并给出写法，不会默认放行。
-#
-# 页面：web_assert 从标准输入读页面，命中的确是应用的真实页面时返回 0。
-# 身份：identity_check 用应用自己的“当前用户”接口断言认出的是主人管理员。没有用户体系时写 IDENTITY_NA=1，
-#       并在 SMOKE_NOTE 里写原因。dweb / web_get 是带主人会话的请求助手，可继续走应用自己的登录链。
-# 工具：MCP_TOOL 写一个只读工具名（可带插件前缀），MCP_ARGS 是 JSON 参数；mcp_assert 从标准输入读调用结果。
-#       要断言多个工具时改成写 mcp_check；调用前要备数据时写 before_mcp。
-# 装之前要准备（如先配出口代理）：写 before_install。
+# qBittorrent：sso=proxy；qBittorrent 不提供用户身份接口，主人身份由云吞网关认证。
+SSO=proxy
+MCP=0
+IDENTITY_NA=1
+E2E_NOTE="qBittorrent 是单用户 WebUI；应用侧没有可断言的用户身份接口，免登录由网关来源地址白名单保证。"
 
-web_assert() { grep -q '你好'; }   # 示例页的标题
+qbit_acceptance() (
+  set -u
+  local web jar root share work index torrent_name torrent_file info item hash name content_path
+  local downloaded speed speed_seen=0 host_path download_file=""
+  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:-}}"
+  jar="${E2E_JAR:-${SMOKE_JAR:-}}"
+  root="${E2E_DIR:-${SMOKE_DIR:-}}"
+  share="$root/.wonton/data/shares/downloads"
+  work="${TMPDIR:-/tmp}/wonton-qbittorrent-smoke.$$"
+  hash=""
+  mkdir -p "$work"
+  cleanup() {
+    local cleanup_hashes="${hash:-}"
+    if [ -z "$cleanup_hashes" ]; then
+      cleanup_hashes="$(curl -sS --noproxy '*' -b "$jar" "$web/api/v2/torrents/info?filter=all" 2>/dev/null \
+        | jq -r '[.[] | select(.name | test("debian.*netinst"; "i")) | .hash] | join(",")' 2>/dev/null || true)"
+    fi
+    if [ -n "$cleanup_hashes" ]; then
+      curl -sS --noproxy '*' -b "$jar" -X POST \
+        --data-urlencode "hashes=$cleanup_hashes" --data-urlencode 'deleteFiles=true' \
+        "$web/api/v2/torrents/delete" >/dev/null 2>&1 || true
+    fi
+    rm -rf "$work"
+  }
+  trap cleanup EXIT
 
-identity_check() { # 页面回显的就是网关注入的主人用户名
-  local page
-  page="$(dweb /)" || { echo "页面失败：$page"; return 1; }
-  grep -qF "你好，$SMOKE_OWNER" <<<"$page" || { echo "页面没回显主人 $SMOKE_OWNER：$(head -c 120 <<<"$page")"; return 1; }
+  index="$(curl -fsSL --max-time 60 'https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/')" || {
+    echo '下载 Debian 种子目录失败'; return 1; }
+  torrent_name="$(printf '%s' "$index" | python3 -c 'import re, sys; m = re.findall(r"href=[\"'"'"']([^\"'"'"']+amd64-netinst\.iso\.torrent)[\"'"'"']", sys.stdin.read()); print(m[0].rsplit("/", 1)[-1] if m else "")')"
+  [ -n "$torrent_name" ] || { echo 'Debian 种子目录没有 amd64 netinst torrent'; return 1; }
+  torrent_file="$work/$torrent_name"
+  curl -fsSL --max-time 120 -o "$torrent_file" \
+    "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/$torrent_name" || {
+    echo '下载 Debian netinst torrent 失败'; return 1; }
+
+  info="$(curl -sS --noproxy '*' --fail-with-body -b "$jar" \
+    -F "torrents=@$torrent_file" "$web/api/v2/torrents/add")" || {
+    echo "添加 Debian torrent 失败：$info"; return 1; }
+  jq -e '(.success_count // 0) >= 1 and (.failure_count // 0) == 0' <<<"$info" >/dev/null 2>&1 || { echo "qBittorrent 未接受 torrent：$info"; return 1; }
+
+  for _ in $(seq 1 90); do
+    info="$(curl -sS --noproxy '*' --fail-with-body -b "$jar" \
+      "$web/api/v2/torrents/info?filter=all")" || { echo '读取 torrent 状态失败'; return 1; }
+    item="$(jq -c '[.[] | select(.name | test("debian.*netinst"; "i"))][0] // empty' <<<"$info")"
+    if [ -n "$item" ]; then
+      hash="$(jq -r '.hash' <<<"$item")"
+      name="$(jq -r '.name' <<<"$item")"
+      content_path="$(jq -r '.content_path // empty' <<<"$item")"
+      downloaded="$(jq -r '.downloaded // .completed // 0' <<<"$item")"
+      speed="$(jq -r '.dlspeed // 0' <<<"$item")"
+      [ "$speed" -gt 0 ] && speed_seen=1
+      if [ "$downloaded" -ge 2097152 ] && [ "$speed_seen" -eq 1 ]; then
+        break
+      fi
+    fi
+    sleep 2
+  done
+  [ -n "${hash:-}" ] || { echo '找不到刚添加的 Debian torrent'; return 1; }
+  [ "${downloaded:-0}" -ge 2097152 ] && [ "$speed_seen" -eq 1 ] || {
+    echo "Debian torrent 未达到 2 MiB 且未观察到下载速度（downloaded=${downloaded:-0}, dlspeed=${speed:-0}）"; return 1; }
+
+  download_file="$(find "$share" -type f -iname '*netinst*' -print -quit 2>/dev/null || true)"
+  [ -n "$download_file" ] && [ -f "$download_file" ] || {
+    echo "下载文件不在 downloads 共享文件夹：$share"; return 1; }
+
+  curl -sS --noproxy '*' --fail-with-body -b "$jar" -X POST \
+    --data-urlencode "hashes=$hash" --data-urlencode 'deleteFiles=true' \
+    "$web/api/v2/torrents/delete" >/dev/null || { echo '删除 Debian torrent 失败'; return 1; }
+  for _ in $(seq 1 30); do
+    info="$(curl -sS --noproxy '*' --fail-with-body -b "$jar" \
+      "$web/api/v2/torrents/info?filter=all")" || true
+    jq -e --arg h "$hash" 'any(.[]; .hash == $h)' <<<"$info" >/dev/null 2>&1 || break
+    sleep 1
+  done
+  hash=""
+  [ ! -e "$download_file" ] || { echo "删除 torrent 后文件仍在：$download_file"; return 1; }
+  echo "Debian netinst torrent 下载达到 ${downloaded} 字节且观察到速度，文件已删除：$name"
+)
+
+web_assert() {
+  grep -qi 'qBittorrent' || return 1
+  qbit_acceptance
 }
