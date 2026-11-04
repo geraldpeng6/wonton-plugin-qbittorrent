@@ -29,6 +29,17 @@ qbit_acceptance() (
     rm -rf "$work"
   }
   trap cleanup EXIT
+  if ! curl -fsS --noproxy '*' -b "$jar" "$web/api/v2/app/version" >/dev/null 2>&1; then
+    if [ -z "${E2E_TOKEN:-}" ] || [ -z "${E2E_BASE:-}" ]; then
+      echo 'qBittorrent 插件会话失效，且没有核心登录变量'; return 1
+    fi
+    curl -sS --noproxy '*' -o /dev/null -c "$jar" \
+      --data-urlencode "token=$E2E_TOKEN" "$E2E_BASE/_wonton/login" || {
+      echo '主人令牌登录不了核心'; return 1; }
+    curl -fsS --noproxy '*' -o /dev/null -L -b "$jar" -c "$jar" \
+      -H 'Accept: text/html' "$web/" || {
+      echo 'qBittorrent 插件网页会话登录失败'; return 1; }
+  fi
 
   index="$(curl -fsSL --max-time 60 'https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/')" || {
     echo '下载 Debian 种子目录失败'; return 1; }
