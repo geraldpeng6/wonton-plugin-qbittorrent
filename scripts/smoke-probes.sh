@@ -90,6 +90,10 @@ qbit_acceptance() (
     sleep 1
   done
   hash=""
+  for _ in $(seq 1 30); do
+    [ ! -e "$download_file" ] && break
+    sleep 1
+  done
   [ ! -e "$download_file" ] || { echo "删除 torrent 后文件仍在：$download_file"; return 1; }
   echo "Debian netinst torrent 下载达到 ${downloaded} 字节且观察到速度，文件已删除：$name"
 )
