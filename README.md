@@ -1,11 +1,12 @@
-# 云吞插件模板
+# 云吞插件：qBittorrent
 
-云吞（Wonton）的插件就是一个 `docker-compose.yml`，顶层多一个 `x-wonton` 字段，写明插件在云吞里的身份、网页入口和要的
-权限。一个插件一个 Git 仓库，仓库根目录就是插件包，发布就是打 tag。主人在 App 里装上插件，核心按清单起容器、接好登录，
-插件的网页在 App 里作为小程序打开。
+云吞（Wonton）的 qBittorrent 插件：在共享文件夹 `downloads` 中下载和管理 BT 任务。网页经云吞网关访问，BT 连接端口按需开放到局域网。
 
-这个仓库是模板：一个能装上的示例插件（nginx 显示一个向主人问好的网页），加上检查、开发环境和发布三个脚本。从这个模板
-新建仓库，照着下面把示例换成你的应用。
+这个插件使用上游官方镜像 `qbittorrentofficial/qbittorrent-nox`，默认简体中文界面、默认下载路径和临时路径都在 `downloads` 共享文件夹；网关来源地址写入 qBittorrent 的免认证白名单，因此打开网页不用再输一次密码。
+
+## 图标来源与许可
+
+`icon.svg` 使用 qBittorrent 官方标志；来源、处理方式、许可证全文和商标说明见 [NOTICE](NOTICE)。
 
 ## 准备
 
@@ -27,20 +28,20 @@ scripts/dev.sh up
 scripts/dev.sh install
 ```
 
-`up` 在本机起一套云吞，打印它的地址。示例（实例名取自目录名加 4 位随机数，端口随机）是
-`http://template3f2a.wonton.localhost:21234/`。浏览器打开，用 `scripts/dev.sh token` 输出的主人令牌登录。`install` 先列出
-插件要的权限，确认后装上，打印插件网页的地址。
+`up` 在本机起一套云吞，打印它的地址。浏览器打开，用 `scripts/dev.sh token` 输出的主人令牌登录。`install` 先列出
+插件要的权限，确认后装上，打印 qBittorrent 网页的地址。打开就是中文 WebUI，不需要再输入 qBittorrent 密码。
 
-示例网页经 `sso: proxy` 拿到用户名，打开就是“你好，<用户名>”。换成真实应用时，把示例的 `description`、`about`、`tags`
-换成你的，`web/`、compose 里的两个 `configs` 和 `sso: proxy` 及其 `proxy` 删掉（默认让应用自己登录），`webui.service`、
-`port` 换成你的，按下面的规则重写。Chrome、Firefox 和 curl 把 `*.localhost` 直接解析到本机，不用改 hosts。
+下载默认写入共享文件夹 `downloads`；BT 端口 51413 的 TCP 和 UDP 可按安装时授权开放到局域网。应用网页只经云吞网关访问。
+
+Chrome、Firefox 和 curl 把 `*.localhost` 直接解析到本机，不用改 hosts。
+
 
 ## 仓库里有什么
 
 | 路径 | 内容 |
 | --- | --- |
-| `docker-compose.yml` | 插件本身：compose 加上 `x-wonton` 清单 |
-| `icon.svg`、`web/` | 清单和 compose 引用的文件：图标、交给容器的配置和网页 |
+| `docker-compose.yml` | 插件本身：Compose 加上 `x-wonton` 清单 |
+| `icon.svg`、`config/` | 清单和 Compose 引用的文件：官方图标、qBittorrent 配置种子和初始化脚本 |
 | `screenshots/` | 商店详情页里的截图 |
 | `scripts/check.sh` | 检查插件包，规则和安装时一样 |
 | `scripts/dev.sh` | 开发环境：起一套云吞，装、重装、卸载插件，看日志 |
