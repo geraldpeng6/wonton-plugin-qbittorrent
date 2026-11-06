@@ -101,6 +101,6 @@ qbit_acceptance() (
 )
 
 web_assert() {
-  grep -qi 'qBittorrent' || return 1
+  grep -qi 'VueTorrent' || return 1
   qbit_acceptance
 }

@@ -10,4 +10,34 @@ if [ ! -e "$config_file" ]; then
 else
     # 重装会重建插件网络，核心地址可能变化；只刷新免认证白名单，保留 qBittorrent 其他配置。
     sed -i "s|^WebUI\\\\AuthSubnetWhitelist=.*|WebUI\\\\AuthSubnetWhitelist=${WONTON_CORE_ADDRESS:?}/32|" "$config_file"
+    # 升级前的老配置没有 VueTorrent 两项；键已存在（用户可能关掉了备用 WebUI）就不碰。
+    if ! grep -q '^WebUI\\AlternativeUIEnabled=' "$config_file"; then
+        sed -i '/^WebUI\\AuthSubnetWhitelistEnabled=/a WebUI\\RootFolder=/vuetorrent' "$config_file"
+        sed -i '/^WebUI\\AuthSubnetWhitelistEnabled=/a WebUI\\AlternativeUIEnabled=true' "$config_file"
+    fi
 fi
+
+# 备用 WebUI 用 VueTorrent：官方发版取来解压进数据目录。版本与校验和写死在 docker-compose.yml。
+version="${VUETORRENT_VERSION:?}"
+sha256="${VUETORRENT_SHA256:?}"
+dest=/vuetorrent
+if [ "$(cat "$dest/.version" 2>/dev/null || true)" = "$version" ] && [ -f "$dest/public/index.html" ]; then
+    exit 0
+fi
+
+zip=/tmp/vuetorrent.zip
+curl -fsSL --retry 3 --retry-delay 2 -o "$zip" \
+    "https://github.com/VueTorrent/VueTorrent/releases/download/${version}/vuetorrent.zip"
+echo "${sha256}  $zip" | sha256sum -c - >/dev/null
+stage=/tmp/vuetorrent-extract
+rm -rf "$stage"
+mkdir -p "$stage"
+unzip -q "$zip" -d "$stage"
+[ -f "$stage/vuetorrent/public/index.html" ] ||
+    { echo "vuetorrent.zip 里没有 vuetorrent/public/index.html"; exit 1; }
+# 换版本时清掉旧文件再放进新文件；挂载点本身不删。
+find "$dest" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+mv "$stage/vuetorrent/"* "$dest/"
+rmdir "$stage/vuetorrent" "$stage"
+rm -f "$zip"
+printf '%s\n' "$version" >"$dest/.version"

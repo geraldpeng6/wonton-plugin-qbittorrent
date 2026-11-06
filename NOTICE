@@ -12,6 +12,17 @@ https://github.com/qbittorrent/docker-qbittorrent-nox/tree/4120bfab580c44deb7bb3
 上游许可证全文：qBittorrent 源码仓库固定提交中的 COPYING.GPLv2
 https://github.com/qbittorrent/qBittorrent/blob/7e8db603f207fec1ee5dc192cacf44fed264452c7/COPYING.GPLv2
 
+VueTorrent 界面
+================
+
+网页界面：VueTorrent（https://github.com/VueTorrent/VueTorrent ），qBittorrent 的备用 WebUI。
+来源：官方发版 v2.36.1 的 vuetorrent.zip，sha256 为
+70b67531f0f3bc36c8bd05d82cc7ba1ee37c71c17f0b6c45f522200e35e66f37，由插件的 init 服务在安装和启动时
+从 https://github.com/VueTorrent/VueTorrent/releases/download/v2.36.1/vuetorrent.zip 取得。
+不随插件包分发、不修改：交给 qBittorrent 的备用 WebUI 功能原样使用。
+许可：GNU GPL v3（https://github.com/VueTorrent/VueTorrent/blob/master/LICENSE ）。
+版权与作者名单见 VueTorrent 源码仓库。
+
                     GNU GENERAL PUBLIC LICENSE
                        Version 2, June 1991
 
