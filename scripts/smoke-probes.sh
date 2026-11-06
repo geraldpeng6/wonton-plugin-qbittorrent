@@ -1,20 +1,21 @@
+# scripts/smoke.sh source 本文件，不单独执行。
+# shellcheck shell=bash
 # qBittorrent：sso=proxy；qBittorrent 不提供用户身份接口，主人身份由云吞网关认证。
-SSO=proxy
-MCP=0
-IDENTITY_NA=1
-E2E_NOTE="qBittorrent 是单用户 WebUI；应用侧没有可断言的用户身份接口，免登录由网关来源地址白名单保证。"
+export IDENTITY_NA=1
+export SMOKE_NOTE="qBittorrent 是单用户 WebUI；应用侧没有可断言的用户身份接口，免登录由网关来源地址白名单保证。"
 
 qbit_acceptance() (
   set -u
-  local web jar root share work index torrent_name torrent_file info item hash name content_path
-  local downloaded speed speed_seen=0 host_path download_file=""
+  local web jar root share swork index torrent_name torrent_file info item hash name
+  local downloaded speed speed_seen=0 download_file=""
   web="${E2E_WEB_URL:-${SMOKE_WEB_URL:-}}"
   jar="${E2E_JAR:-${SMOKE_JAR:-}}"
   root="${E2E_DIR:-${SMOKE_DIR:-}}"
   share="$root/.wonton/data/shares/downloads"
-  work="${TMPDIR:-/tmp}/wonton-qbittorrent-smoke.$$"
+  swork="${TMPDIR:-/tmp}/wonton-qbittorrent-smoke.$$"
   hash=""
-  mkdir -p "$work"
+  mkdir -p "$swork"
+  # shellcheck disable=SC2317 # trap 回调，shellcheck 看不到调用点
   cleanup() {
     local cleanup_hashes="${hash:-}"
     if [ -z "$cleanup_hashes" ]; then
@@ -26,7 +27,7 @@ qbit_acceptance() (
         --data-urlencode "hashes=$cleanup_hashes" --data-urlencode 'deleteFiles=true' \
         "$web/api/v2/torrents/delete" >/dev/null 2>&1 || true
     fi
-    rm -rf "$work"
+    rm -rf "$swork"
   }
   trap cleanup EXIT
   if ! curl -fsS --noproxy '*' -b "$jar" "$web/api/v2/app/version" >/dev/null 2>&1; then
@@ -45,7 +46,7 @@ qbit_acceptance() (
     echo '下载 Debian 种子目录失败'; return 1; }
   torrent_name="$(printf '%s' "$index" | python3 -c 'import re, sys; m = re.findall(r"href=[\"'"'"']([^\"'"'"']+amd64-netinst\.iso\.torrent)[\"'"'"']", sys.stdin.read()); print(m[0].rsplit("/", 1)[-1] if m else "")')"
   [ -n "$torrent_name" ] || { echo 'Debian 种子目录没有 amd64 netinst torrent'; return 1; }
-  torrent_file="$work/$torrent_name"
+  torrent_file="$swork/$torrent_name"
   curl -fsSL --max-time 120 -o "$torrent_file" \
     "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/$torrent_name" || {
     echo '下载 Debian netinst torrent 失败'; return 1; }
@@ -62,7 +63,6 @@ qbit_acceptance() (
     if [ -n "$item" ]; then
       hash="$(jq -r '.hash' <<<"$item")"
       name="$(jq -r '.name' <<<"$item")"
-      content_path="$(jq -r '.content_path // empty' <<<"$item")"
       downloaded="$(jq -r '.downloaded // .completed // 0' <<<"$item")"
       speed="$(jq -r '.dlspeed // 0' <<<"$item")"
       [ "$speed" -gt 0 ] && speed_seen=1
@@ -73,12 +73,14 @@ qbit_acceptance() (
     sleep 2
   done
   [ -n "${hash:-}" ] || { echo '找不到刚添加的 Debian torrent'; return 1; }
-  [ "${downloaded:-0}" -ge 2097152 ] && [ "$speed_seen" -eq 1 ] || {
-    echo "Debian torrent 未达到 2 MiB 且未观察到下载速度（downloaded=${downloaded:-0}, dlspeed=${speed:-0}）"; return 1; }
+  if [ "${downloaded:-0}" -lt 2097152 ] || [ "$speed_seen" -ne 1 ]; then
+    echo "Debian torrent 未达到 2 MiB 且未观察到下载速度（downloaded=${downloaded:-0}, dlspeed=${speed:-0}）"; return 1
+  fi
 
   download_file="$(find "$share" -type f -iname '*netinst*' -print -quit 2>/dev/null || true)"
-  [ -n "$download_file" ] && [ -f "$download_file" ] || {
-    echo "下载文件不在 downloads 共享文件夹：$share"; return 1; }
+  if [ -z "$download_file" ] || [ ! -f "$download_file" ]; then
+    echo "下载文件不在 downloads 共享文件夹：$share"; return 1
+  fi
 
   curl -sS --noproxy '*' --fail-with-body -b "$jar" -X POST \
     --data-urlencode "hashes=$hash" --data-urlencode 'deleteFiles=true' \
