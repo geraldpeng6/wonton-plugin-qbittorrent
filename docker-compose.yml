@@ -96,6 +96,13 @@ x-wonton:
     proxy:
       headers:
         Remote-User: "{user}"
+  provides:
+    # qBittorrent Web API v2（/api/v2/）。核心转发来的请求来自核心地址，
+    # 免登录由 config/qBittorrent.conf 的 WebUI\AuthSubnetWhitelist（只放行核心地址 /32）完成。
+    # 字段写法按核心“插件按能力依赖”接口定稿为准，定稿前安装会因未知字段失败。
+    torrent_client:
+      service: qbittorrent
+      port: 8080
   lan:
     ports:
       - { service: qbittorrent, port: 51413 }
