@@ -7,14 +7,18 @@ services:
     environment:
       # 核心地址固定在插件网络的末端；只让网关来源免登录。
       WONTON_CORE_ADDRESS: "${WONTON_CORE_ADDRESS:?核心没有注入核心地址}"
+      # VueTorrent 官方发版，版本号与 zip 的 sha256 写死在这里。Dependabot 认不出这个变量，
+      # 升级时一起改两行，地址形如 https://github.com/VueTorrent/VueTorrent/releases/download/<版本>/vuetorrent.zip。
+      VUETORRENT_VERSION: "v2.36.1"
+      VUETORRENT_SHA256: "70b67531f0f3bc36c8bd05d82cc7ba1ee37c71c17f0b6c45f522200e35e66f37"
     volumes:
       - ${WONTON_APP_DATA}/config:/config
+      - ${WONTON_APP_DATA}/vuetorrent:/vuetorrent
     configs:
       - source: config_seed
         target: /seed/qBittorrent.conf
       - source: config_init
         target: /seed/init.sh
-    network_mode: none
     restart: "no"
 
   qbittorrent:
@@ -33,6 +37,8 @@ services:
       WONTON_CORE_ADDRESS: "${WONTON_CORE_ADDRESS}"
     volumes:
       - ${WONTON_APP_DATA}/config:/config
+      # 备用 WebUI 的静态文件，由 init 服务放进数据目录；应用只读。
+      - ${WONTON_APP_DATA}/vuetorrent:/vuetorrent:ro
       - ${WONTON_SHARE_DOWNLOADS}:/downloads
     read_only: true
     tmpfs:
@@ -53,9 +59,9 @@ configs:
     file: config/init.sh
 
 x-wonton:
-  spec: "0.4"
+  spec: "0.6"
   id: org.qbittorrent.qbittorrent
-  version: 0.1.0
+  version: 0.2.0
   kind: app
   title: { zh: qBittorrent, en: qBittorrent }
   description:
@@ -74,14 +80,14 @@ x-wonton:
     zh: |
       qBittorrent 是一个完整的 BT 下载器：添加磁力链接或种子文件，查看速度和进度，管理队列。
 
-      下载内容默认写入共享文件夹 downloads。网页经云吞网关打开，网关所在网络免 qBittorrent 登录；局域网只开放 BT 连接端口，WebUI 不直接暴露。
+      界面是 VueTorrent，手机上好用，可以安装成 PWA；设置里可以切回 qBittorrent 原版界面。下载内容默认写入共享文件夹 downloads。网页经云吞网关打开，网关所在网络免 qBittorrent 登录；局域网只开放 BT 连接端口，WebUI 不直接暴露。
     en: |
       qBittorrent is a full BitTorrent client: add magnet links or torrent files, watch progress and speed, and manage the queue.
 
-      Downloads go to the downloads shared folder by default. The WebUI is opened through the Wonton gateway, which is trusted without a second qBittorrent login; only the BitTorrent port is exposed on the LAN.
+      The interface is VueTorrent — mobile friendly and installable as a PWA; you can switch back to the stock qBittorrent UI in its settings. Downloads go to the downloads shared folder by default. The WebUI is opened through the Wonton gateway, which is trusted without a second qBittorrent login; only the BitTorrent port is exposed on the LAN.
   release_notes:
-    zh: 首版：中文界面、共享文件夹下载、网关免二次登录和 BT TCP/UDP 端口。
-    en: First release with a Chinese WebUI, shared-folder downloads, gateway-based login bypass, and TCP/UDP BitTorrent access.
+    zh: 界面换成 VueTorrent：手机上好用、可安装成 PWA，qBittorrent 设置里可随时切回原版界面。
+    en: "The WebUI is now VueTorrent: mobile friendly, installable as a PWA, with the stock qBittorrent UI still one setting away."
   webui:
     service: qbittorrent
     port: 8080

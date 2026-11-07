@@ -4,6 +4,57 @@
 export IDENTITY_NA=1
 export SMOKE_NOTE="qBittorrent 是单用户 WebUI；应用侧没有可断言的用户身份接口，免登录由网关来源地址白名单保证。"
 
+qbit_session() (
+  # 会话有效就直接用；失效时用核心登录变量重建。qBittorrent 不认 Remote-User，免登录靠网关来源白名单。
+  set -u
+  local web jar
+  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+  jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+  curl -fsS --noproxy '*' -b "$jar" "$web/api/v2/app/version" >/dev/null 2>&1 && return 0
+  local token base
+  token="${E2E_TOKEN:-${SMOKE_TOKEN:-}}"
+  base="${E2E_BASE:-${SMOKE_BASE:-}}"
+  if [ -z "$token" ] || [ -z "$base" ]; then
+    echo 'qBittorrent 插件会话失效，且没有核心登录变量'; return 1
+  fi
+  curl -sS --noproxy '*' -o /dev/null -c "$jar" \
+    --data-urlencode "token=$token" "$base/_wonton/login" || {
+    echo '主人令牌登录不了核心'; return 1; }
+  curl -fsS --noproxy '*' -o /dev/null -L -b "$jar" -c "$jar" \
+    -H 'Accept: text/html' "$web/" || {
+    echo 'qBittorrent 插件网页会话登录失败'; return 1; }
+)
+
+# data_write：在应用里写一条落盘的数据标记（分类，存进 categories.json），升级/重装后由 data_check 验证。
+data_write() (
+  set -eu
+  local web jar code
+  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+  jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+  qbit_session || return 1
+  # 先删旧标记再建，冒烟重跑不残留。
+  curl -sS --noproxy '*' -b "$jar" -X POST --data-urlencode 'categories=wonton-smoke' \
+    "$web/api/v2/torrents/deleteCategories" >/dev/null 2>&1 || true
+  code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' \
+    -X POST --data-urlencode 'category=wonton-smoke' "$web/api/v2/torrents/createCategory")"
+  [ "$code" = 200 ] || { echo "写数据标记失败：createCategory HTTP $code"; return 1; }
+  echo "已写数据标记：分类 wonton-smoke"
+)
+
+# data_check：升级/重装后分类还在，应用数据才算保住。
+data_check() (
+  set -eu
+  local web jar cats
+  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+  jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+  qbit_session || return 1
+  cats="$(curl -sS --noproxy '*' --fail-with-body -b "$jar" "$web/api/v2/torrents/categories")" || {
+    echo "读分类失败：${cats:-（空响应）}"; return 1; }
+  jq -e 'has("wonton-smoke")' <<<"$cats" >/dev/null || {
+    echo "升级/重装后找不到 wonton-smoke 分类：$(head -c 200 <<<"$cats")"; return 1; }
+  echo "wonton-smoke 分类还在：升级/重装保住了数据"
+)
+
 qbit_acceptance() (
   set -u
   local web jar dir share swork index torrent_name torrent_file info item hash name
@@ -30,17 +81,7 @@ qbit_acceptance() (
     rm -rf "$swork"
   }
   trap cleanup EXIT
-  if ! curl -fsS --noproxy '*' -b "$jar" "$web/api/v2/app/version" >/dev/null 2>&1; then
-    if [ -z "${E2E_TOKEN:-}" ] || [ -z "${E2E_BASE:-}" ]; then
-      echo 'qBittorrent 插件会话失效，且没有核心登录变量'; return 1
-    fi
-    curl -sS --noproxy '*' -o /dev/null -c "$jar" \
-      --data-urlencode "token=$E2E_TOKEN" "$E2E_BASE/_wonton/login" || {
-      echo '主人令牌登录不了核心'; return 1; }
-    curl -fsS --noproxy '*' -o /dev/null -L -b "$jar" -c "$jar" \
-      -H 'Accept: text/html' "$web/" || {
-      echo 'qBittorrent 插件网页会话登录失败'; return 1; }
-  fi
+  qbit_session || { echo 'qBittorrent 插件网页会话登录失败'; return 1; }
 
   index="$(curl -fsSL --max-time 60 'https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/')" || {
     echo '下载 Debian 种子目录失败'; return 1; }
@@ -101,6 +142,6 @@ qbit_acceptance() (
 )
 
 web_assert() {
-  grep -qi 'qBittorrent' || return 1
+  grep -qi 'VueTorrent' || return 1
   qbit_acceptance
 }
