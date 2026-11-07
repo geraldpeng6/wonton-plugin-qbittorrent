@@ -45,6 +45,6 @@ unzip -q "$zip" -d "$stage"
 # 换版本时清掉旧文件再放进新文件；挂载点本身不删。
 find "$dest" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
 mv "$stage/vuetorrent/"* "$dest/"
-rmdir "$stage/vuetorrent" "$stage"
+rm -rf "$stage"
 rm -f "$zip"
 printf '%s\n' "$version" >"$dest/.version"

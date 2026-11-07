@@ -25,7 +25,7 @@ qbit_session() (
     echo 'qBittorrent 插件网页会话登录失败'; return 1; }
 )
 
-# data_write：在应用里写一条落盘的数据标记（分类，存进 qBittorrent.conf），升级/重装后由 data_check 验证。
+# data_write：在应用里写一条落盘的数据标记（分类，存进 categories.json），升级/重装后由 data_check 验证。
 data_write() (
   set -eu
   local web jar code
