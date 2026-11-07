@@ -26,9 +26,15 @@ if [ "$(cat "$dest/.version" 2>/dev/null || true)" = "$version" ] && [ -f "$dest
 fi
 
 zip=/tmp/vuetorrent.zip
-curl -fsSL --retry 3 --retry-delay 2 -o "$zip" \
-    "https://github.com/VueTorrent/VueTorrent/releases/download/${version}/vuetorrent.zip"
-echo "${sha256}  $zip" | sha256sum -c - >/dev/null
+url="https://github.com/VueTorrent/VueTorrent/releases/download/${version}/vuetorrent.zip"
+# 经出网代理到 GitHub 发版 CDN 的传输可能停摆：30 秒没等到 1 KiB 就当超时（瞬时错误，触发重试），
+# --max-time 兜住慢速细流，-C - 让重试接着已下载的字节继续。
+if ! curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 240 --connect-timeout 10 \
+    --speed-limit 1024 --speed-time 30 --max-time 120 -C - -o "$zip" "$url"; then
+    echo "下载 VueTorrent 失败：${url}（检查出网代理是否可用、GitHub 是否可达）"
+    exit 1
+fi
+echo "${sha256}  $zip" | sha256sum -c - || { echo "VueTorrent 校验和不匹配，删除残留后退出"; rm -f "$zip"; exit 1; }
 stage=/tmp/vuetorrent-extract
 rm -rf "$stage"
 mkdir -p "$stage"
