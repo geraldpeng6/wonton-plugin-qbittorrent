@@ -59,7 +59,7 @@ configs:
     file: config/init.sh
 
 x-wonton:
-  spec: "0.4"
+  spec: "0.6"
   id: org.qbittorrent.qbittorrent
   version: 0.2.0
   kind: app
