@@ -6,12 +6,12 @@ export SMOKE_NOTE="qBittorrent 是单用户 WebUI；应用侧没有可断言的�
 
 qbit_acceptance() (
   set -u
-  local web jar root share swork index torrent_name torrent_file info item hash name
+  local web jar dir share swork index torrent_name torrent_file info item hash name
   local downloaded speed speed_seen=0 download_file=""
   web="${E2E_WEB_URL:-${SMOKE_WEB_URL:-}}"
   jar="${E2E_JAR:-${SMOKE_JAR:-}}"
-  root="${E2E_DIR:-${SMOKE_DIR:-}}"
-  share="$root/.wonton/data/shares/downloads"
+  dir="${E2E_DIR:-${SMOKE_DIR:-}}"
+  share="$dir/.wonton/data/shares/downloads"
   swork="${TMPDIR:-/tmp}/wonton-qbittorrent-smoke.$$"
   hash=""
   mkdir -p "$swork"
