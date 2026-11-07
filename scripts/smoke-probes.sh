@@ -9,6 +9,7 @@ qbit_acceptance() (
   local web jar dir share swork index torrent_name torrent_file info item hash name
   local downloaded speed speed_seen=0 download_file=""
   web="${E2E_WEB_URL:-${SMOKE_WEB_URL:-}}"
+  web="${web%/}"   # 网关 web_url 带尾斜杠，直接拼会得到 //api/v2/...，qBittorrent 回 404 Not Found
   jar="${E2E_JAR:-${SMOKE_JAR:-}}"
   dir="${E2E_DIR:-${SMOKE_DIR:-}}"
   share="$dir/.wonton/data/shares/downloads"
@@ -101,6 +102,7 @@ qbit_acceptance() (
 )
 
 web_assert() {
-  grep -qi 'qBittorrent' || return 1
+  # 登录页同样有 qBittorrent 字样；#desktop 只有已登录的私有首页才有（登录页没有）。
+  grep -q '<div id="desktop">' || return 1
   qbit_acceptance
 }
