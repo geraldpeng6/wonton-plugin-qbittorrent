@@ -27,9 +27,10 @@ fi
 
 zip=/tmp/vuetorrent.zip
 url="https://github.com/VueTorrent/VueTorrent/releases/download/${version}/vuetorrent.zip"
-# 经出网代理到 GitHub 发版 CDN 的链路可能停摆也可能只是慢（慢链路实测 37 KB/s，6.5 MB 要约 3 分钟）：
-# 30 秒没等到 1 KiB 当瞬时错误触发重试，--max-time 给慢而不断的传输留足时间，-C - 让重试接着已下载的字节继续。
-if ! curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 180 --connect-timeout 10 \
+# 经出网代理到 GitHub 发版 CDN 的链路可能停摆也可能只是慢（慢链路实测约 20-37 KB/s，6.5 MB 要 3-5 分钟）：
+# 30 秒没等到 1 KiB 当瞬时错误触发重试，--max-time 给慢而不断的传输留足时间；
+# 重试窗口要大于单次超时，被截断的传输才能靠 -C - 续传接着跑完。
+if ! curl -fsSL --retry 4 --retry-delay 2 --retry-max-time 300 --connect-timeout 10 \
     --speed-limit 1024 --speed-time 30 --max-time 240 -C - -o "$zip" "$url"; then
     echo "下载 VueTorrent 失败：${url}（检查出网代理是否可用、GitHub 是否可达）"
     exit 1
