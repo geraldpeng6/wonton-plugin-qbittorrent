@@ -1,7 +1,7 @@
 # qBittorrent：经云吞网关打开 WebUI，把 BT 下载写入共享文件夹 downloads。
 services:
   init:
-    image: qbittorrentofficial/qbittorrent-nox:5.2.1-1@sha256:d1003daa619b33f02cf094347de8d4db985f916ec9c80bde7093d32b6ea1c019
+    image: qbittorrentofficial/qbittorrent-nox:5.3.0-2@sha256:43b2d352cf76330a7ca34c7320b9b74227d6f31e662e0e123d0457206b09a7ea
     user: "${PUID}:${PGID}"
     entrypoint: ["/bin/sh", "/seed/init.sh"]
     environment:
@@ -22,7 +22,7 @@ services:
     restart: "no"
 
   qbittorrent:
-    image: qbittorrentofficial/qbittorrent-nox:5.2.1-1@sha256:d1003daa619b33f02cf094347de8d4db985f916ec9c80bde7093d32b6ea1c019
+    image: qbittorrentofficial/qbittorrent-nox:5.3.0-2@sha256:43b2d352cf76330a7ca34c7320b9b74227d6f31e662e0e123d0457206b09a7ea
     user: "${PUID}:${PGID}"
     depends_on:
       init:
