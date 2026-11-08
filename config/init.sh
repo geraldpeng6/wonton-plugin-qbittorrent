@@ -17,6 +17,14 @@ else
     fi
 fi
 
+# 下载完成的通知邮件经核心的内部邮箱发信：不用认证、不加密，收件人是主人的内部邮箱，信转进主人的 Wonton 私聊。
+# 键已存在就不碰：装好时种过、用户改过收件人或关了开关，重装都不覆盖。
+if ! grep -q '^MailNotification\\enabled=' "$config_file"; then
+    sed -i "s|^WebUI\\\\AuthSubnetWhitelistEnabled=.*|&\\nMailNotification\\\\enabled=true\\nMailNotification\\\\email=${WONTON_OWNER_EMAIL:?}\\nMailNotification\\\\sender=${WONTON_MAIL_FROM:?}\\nMailNotification\\\\smtp_server=${WONTON_SMTP_HOST:?}:${WONTON_SMTP_PORT:?}\\nMailNotification\\\\req_ssl=false\\nMailNotification\\\\req_auth=false|" "$config_file"
+fi
+grep -q '^MailNotification\\enabled=' "$config_file" ||
+    { echo "qBittorrent.conf 里没有 WebUI\\AuthSubnetWhitelistEnabled，通知邮件写不进去；配置可能被改过，先恢复这项再重装"; exit 1; }
+
 # 备用 WebUI 用 VueTorrent：官方发版取来解压进数据目录。版本与校验和写死在 docker-compose.yml。
 version="${VUETORRENT_VERSION:?}"
 sha256="${VUETORRENT_SHA256:?}"
