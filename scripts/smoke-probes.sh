@@ -9,6 +9,7 @@ qbit_session() (
   set -u
   local web jar
   web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+  web="${web%/}"   # 套件导出的 web_url 带尾斜杠，拼出来会得到 //api/v2/...，qBittorrent 回 404
   jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
   curl -fsS --noproxy '*' -b "$jar" "$web/api/v2/app/version" >/dev/null 2>&1 && return 0
   local token base
@@ -30,6 +31,7 @@ data_write() (
   set -eu
   local web jar code
   web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+  web="${web%/}"   # 套件导出的 web_url 带尾斜杠，拼出来会得到 //api/v2/...，qBittorrent 回 404
   jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
   qbit_session || return 1
   # 先删旧标记再建，冒烟重跑不残留。
@@ -46,6 +48,7 @@ data_check() (
   set -eu
   local web jar cats
   web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+  web="${web%/}"   # 套件导出的 web_url 带尾斜杠，拼出来会得到 //api/v2/...，qBittorrent 回 404
   jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
   qbit_session || return 1
   cats="$(curl -sS --noproxy '*' --fail-with-body -b "$jar" "$web/api/v2/torrents/categories")" || {
@@ -60,6 +63,7 @@ qbit_acceptance() (
   local web jar dir share swork index torrent_name torrent_file info item hash name
   local downloaded speed speed_seen=0 download_file=""
   web="${E2E_WEB_URL:-${SMOKE_WEB_URL:-}}"
+  web="${web%/}"   # 网关 web_url 带尾斜杠，直接拼会得到 //api/v2/...，qBittorrent 回 404 Not Found
   jar="${E2E_JAR:-${SMOKE_JAR:-}}"
   dir="${E2E_DIR:-${SMOKE_DIR:-}}"
   share="$dir/.wonton/data/shares/downloads"
