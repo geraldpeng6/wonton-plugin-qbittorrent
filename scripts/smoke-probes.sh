@@ -146,7 +146,6 @@ qbit_acceptance() (
 )
 
 web_assert() {
-  # 登录页同样有 qBittorrent 字样；#desktop 只有已登录的私有首页才有（登录页没有）。
-  grep -q '<div id="desktop">' || return 1
+  grep -qi 'VueTorrent' || return 1
   qbit_acceptance
 }
