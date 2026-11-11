@@ -151,45 +151,49 @@ web_assert() {
 }
 
 # ---------- 通知邮件（notify，规范 0.11）----------
-qbit_core() { # 核心容器：Mailpit 的别名和 API 密码都在它的网络上/数据目录里
+qbit_core() { # 核心容器：通知房记录、Matrix 令牌和 Tuwunel 都在它的数据目录/网络上
 	docker ps --format '{{.Names}}' | grep -xE "wonton-${SMOKE_INSTANCE:-}--core" | head -1
 }
 
-qbit_mailpit() { # <path>：调 Mailpit API（basic core:<密码>）。主路照核心自己的冒烟：在核心网络里
-	# 打 mailpit.wonton.internal:8025；兜底用应用容器的 wget（它的网络里也有这个别名）。
-	local core pw dd out webc
+qbit_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 probes_setting）
+	if declare -F read_env >/dev/null; then read_env WONTON_DATA_DIR; else probes_setting WONTON_DATA_DIR; fi
+}
+
+qbit_room_query() { # 用主人令牌读「Wonton」通知房最近消息（信被核心投进私聊的最终证据）。
+	# 主人令牌照核心自己的做法：管理令牌走 Tuwunel 的 impersonation 登录；都在核心容器里拿。
+	local core dd room admin srv otok
 	core="$(qbit_core)" || return 1
-	if declare -F read_env >/dev/null; then dd="$(read_env WONTON_DATA_DIR)"; else dd="$(probes_setting WONTON_DATA_DIR)"; fi
-	pw="$(docker exec "$core" cat "$dd/core/mailpit/api-password" 2>/dev/null)"
-	[ -n "${pw:-}" ] || { echo "读不到 Mailpit API 密码（核心数据目录 core/mailpit/api-password）"; return 1; }
-	out="$(docker run --rm --network "container:$core" curlimages/curl:8.23.0 \
-		-s -u "core:$pw" "http://mailpit.wonton.internal:8025$1" 2>&1)"
-	if jq -e '.messages' <<<"$out" >/dev/null 2>&1 || [[ "$out" == "{"* ]]; then
-		printf '%s' "$out"; return 0
-	fi
-	webc="$(docker ps --format '{{.Names}}' | grep "$SMOKE_INSTANCE" | grep 'qbittorrent' | head -1)"
-	[ -n "$webc" ] || { echo "Mailpit 主路没拿到 JSON：$(echo "$out" | head -c 200)"; return 1; }
-	docker exec "$webc" wget -qO- --header "Authorization: Basic $(printf 'core:%s' "$pw" | base64 | tr -d '\n')" \
-		"http://smtp.wonton.internal:8025$1" 2>&1
+	dd="$(qbit_dd)"
+	room="$(docker exec "$core" cat "$dd/core/matrix-notice-room")" ||
+		{ echo "读不到通知房记录（$dd/core/matrix-notice-room）"; return 1; }
+	admin="$(docker exec "$core" cat "$dd/core/matrix-admin-token")" ||
+		{ echo "读不到 Matrix 管理令牌"; return 1; }
+	srv="$(docker exec "$core" cat "$dd/../secrets/matrix-server-name")" ||
+		{ echo "读不到 Matrix 服务器名"; return 1; }
+	otok="$(docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
+		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $admin" -H 'Content-Type: application/json' -d '{}' \
+		"http://tuwunel.wonton.internal:8008/_synapse/admin/v1/users/@owner:$srv/login" | jq -er .access_token)" ||
+		{ echo "拿不到主人的 Matrix 令牌"; return 1; }
+	docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
+		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $otok" \
+		"http://tuwunel.wonton.internal:8008/_matrix/client/v3/rooms/$room/messages?dir=b&limit=20"
 }
 
-qbit_mailpit_wait() { # <from> <to> [次数=20]：等一封 From/To 对上的信进 Mailpit
-	local from="$1" to="$2" n="${3:-20}" i out
-	for ((i = 0; i < n; i++)); do
-		out="$(qbit_mailpit "/api/v1/messages?limit=100")" || { sleep 3; continue; }
-		jq -e --arg f "$from" --arg t "$to" \
-			'.messages | any(.From.Address == $f and any(.To[]; .Address == $t))' <<<"$out" >/dev/null 2>&1 && return 0
-		sleep 3
-	done
-	return 1
+qbit_room_newest_ts() { # <前缀>：通知房里该插件最近一条邮件消息的 origin_server_ts（没有则 0）
+	local out
+	out="$(qbit_room_query)" || { echo 0; return 0; }
+	jq -r --arg p "$1" '[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p))) | .origin_server_ts] | max // 0' <<<"$out" 2>/dev/null || echo 0
 }
 
-qbit_mailpit_wait_gone() { # <to> [次数=20]：等收件人的信从 Mailpit 里消失（核心投进私聊后会把信删掉）
-	local to="$1" n="${2:-20}" i out
+qbit_room_wait() { # <前缀> <标记> <起始 ts> [次数=40]：等通知房里出现这条插件发的新邮件消息（投进私聊后一直都在）
+	local prefix="$1" marker="$2" since="$3" n="${4:-40}" i out hits
 	for ((i = 0; i < n; i++)); do
-		out="$(qbit_mailpit "/api/v1/messages?limit=100")" || { sleep 3; continue; }
-		jq -e --arg t "$to" '(.messages | map(select(.To[].Address == $t)) | length) == 0' <<<"$out" >/dev/null 2>&1 && return 0
-		sleep 3
+		out="$(qbit_room_query)" || { sleep 2; continue; }
+		hits="$(jq -r --arg p "$prefix" --arg m "$marker" --argjson s "$since" '
+			[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p)) and .origin_server_ts > $s)
+			 | select($m == "" or (.content.body | contains($m)))] | length' <<<"$out" 2>/dev/null || echo 0)"
+		[[ "${hits:-0}" -ge 1 ]] && return 0
+		sleep 2
 	done
 	return 1
 }
@@ -212,12 +216,13 @@ extra_check() (
 	# 触发一封真实测试信。
 	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
 	[ "$code" = 200 ] || { echo "sendTestEmail HTTP $code"; return 1; }
-	# 信进内部邮箱：From 是 WONTON_MAIL_FROM（org.qbittorrent.qbittorrent@plugins.wonton.internal）。
-	qbit_mailpit_wait "org.qbittorrent.qbittorrent@plugins.wonton.internal" "$to" 20 ||
-		{ echo "测试信 60 秒没进 Mailpit：$(qbit_mailpit '/api/v1/messages?limit=5' | head -c 300)"; return 1; }
-	echo "测试信已进内部邮箱（To=$to）"
-	# 核心投进收件人私聊后把信从 Mailpit 删掉：信箱里没有这封信 = 已投递。
-	qbit_mailpit_wait_gone "$to" 20 ||
-		{ echo "测试信一直留在 Mailpit：核心没把它投进主人私聊（投完才会删）"; return 1; }
-	echo "核心已把信投进主人的 Wonton 私聊（Mailpit 里已删除）"
+	# 记下触发前该插件最近一封邮件消息的时间，之后只认更新的。
+	before="$(qbit_room_newest_ts "qBittorrent：")"
+	# 触发一封真实测试信。
+	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
+	[ "$code" = 200 ] || { echo "sendTestEmail HTTP $code"; return 1; }
+	# 核心把信投进主人的「Wonton」私聊：房里出现这一封。
+	qbit_room_wait "qBittorrent：" "" "$before" 40 ||
+		{ echo "测试信 80 秒没出现在主人的 Wonton 私聊：$(qbit_room_query | head -c 300)"; return 1; }
+	echo "测试信已进主人的 Wonton 私聊（qBittorrent：…，收件人 $to）"
 )
