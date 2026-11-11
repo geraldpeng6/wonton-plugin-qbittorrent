@@ -149,3 +149,53 @@ web_assert() {
   grep -qi 'VueTorrent' || return 1
   qbit_acceptance
 }
+
+# ---------- 通知邮件（notify，规范 0.11）----------
+qbit_core() { # 核心容器：通知房记录、Matrix 令牌和 Tuwunel 都在它的数据目录/网络上
+	docker ps --format '{{.Names}}' | grep -xE "wonton-${SMOKE_INSTANCE:-}--core" | head -1
+}
+
+qbit_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 probes_setting）
+	if declare -F read_env >/dev/null; then read_env WONTON_DATA_DIR; else probes_setting WONTON_DATA_DIR; fi
+}
+
+qbit_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字。用套件 probes.sh 的
+	# probes_owner_room_wait（随 main 的 kit 同步修），在独立进程里跑，套件的 pass/fail 不盖进冒烟自己的 shell。
+	# 测试信没有随机的标记，文字用插件前缀；冒烟里 extra_check 是唯一发信方，开始后出现即可认。
+	local core dd pdir
+	core="$(qbit_core)" || return 1
+	dd="$(qbit_dd)"
+	pdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	# shellcheck disable=SC2016 # 单引号里是子进程 bash 的变量，$1/$2/$3 是 bash -c 的位置参数
+	env SMOKE_CORE="$core" SMOKE_DATA_DIR="$dd" SMOKE_OWNER="${SMOKE_OWNER:-owner}" \
+		bash -c 'source "$1/lib.sh" && source "$1/probes.sh" && probes_owner_room_wait "$2" "$3"' \
+		_ "$pdir" "$1" "$2"
+}
+
+extra_check() (
+	# 发信端到端：应用自己的「发送测试邮件」接口真发一封（收件人是 init 写进配置的主人内部邮箱），
+	# 核心投进主人私聊后从 Mailpit 取走删除
+	set -u
+	local web jar to out wp code
+	web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+	web="${web%/}"
+	jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+	to="${SMOKE_OWNER:-owner}@wonton.internal"
+	qbit_session || { echo 'qBittorrent 插件网页会话登录失败'; return 1; }
+	# 配置里的通知邮件收件人应是主人的内部邮箱（init 服务写好的）。
+	out="$(curl -sS --noproxy '*' --fail-with-body -b "$jar" "$web/api/v2/app/preferences")" ||
+		{ echo "读偏好失败：$(echo "$out" | head -c 200)"; return 1; }
+	jq -e --arg to "$to" '.mail_notification_email == $to and .mail_notification_enabled == true' <<<"$out" >/dev/null ||
+		{ echo "通知邮件配置不对：$(jq -c '{mail_notification_enabled, mail_notification_email}' <<<"$out")"; return 1; }
+	# 触发一封真实测试信。
+	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
+	[ "$code" = 200 ] || { echo "sendTestEmail HTTP $code"; return 1; }
+	# 等待先挂后台再触发（模板的用法）：信进私聊是秒级投递，先等后发才等得到。
+	qbit_room_wait 120 "qBittorrent：" & wp=$!
+	# 触发一封真实测试信。
+	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
+	[ "$code" = 200 ] || { kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; echo "sendTestEmail HTTP $code"; return 1; }
+	# 核心把信投进主人的「Wonton」私聊：房里出现这一封。
+	wait "$wp" || { echo "测试信 120 秒没出现在主人的 Wonton 私聊（房里没这封信）"; return 1; }
+	echo "测试信已进主人的 Wonton 私聊（qBittorrent：…，收件人 $to）"
+)

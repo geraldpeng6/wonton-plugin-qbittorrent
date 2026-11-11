@@ -7,6 +7,11 @@ services:
     environment:
       # 核心地址固定在插件网络的末端；只让网关来源免登录。
       WONTON_CORE_ADDRESS: "${WONTON_CORE_ADDRESS:?核心没有注入核心地址}"
+      # 下载完成的通知邮件经核心的内部邮箱发信，转进收件人的 Wonton 私聊；收件人默认是主人（owner.identity）。
+      WONTON_SMTP_HOST: "${WONTON_SMTP_HOST:?核心没有注入发信服务器}"
+      WONTON_SMTP_PORT: "${WONTON_SMTP_PORT:?核心没有注入发信端口}"
+      WONTON_MAIL_FROM: "${WONTON_MAIL_FROM:?核心没有注入发件地址}"
+      WONTON_OWNER_EMAIL: "${WONTON_OWNER_EMAIL:?核心没有注入主人邮箱}"
       # VueTorrent 官方发版，版本号与 zip 的 sha256 写死在这里。Dependabot 认不出这个变量，
       # 升级时一起改两行，地址形如 https://github.com/VueTorrent/VueTorrent/releases/download/<版本>/vuetorrent.zip。
       VUETORRENT_VERSION: "v2.36.1"
@@ -59,9 +64,9 @@ configs:
     file: config/init.sh
 
 x-wonton:
-  spec: "0.6"
+  spec: "0.11"
   id: org.qbittorrent.qbittorrent
-  version: 0.2.0
+  version: 0.3.0
   kind: app
   title: { zh: qBittorrent, en: qBittorrent }
   description:
@@ -80,14 +85,14 @@ x-wonton:
     zh: |
       qBittorrent 是一个完整的 BT 下载器：添加磁力链接或种子文件，查看速度和进度，管理队列。
 
-      界面是 VueTorrent，手机上好用，可以安装成 PWA；设置里可以切回 qBittorrent 原版界面。下载内容默认写入共享文件夹 downloads。网页经云吞网关打开，网关所在网络免 qBittorrent 登录；局域网只开放 BT 连接端口，WebUI 不直接暴露。
+      界面是 VueTorrent，手机上好用，可以安装成 PWA；设置里可以切回 qBittorrent 原版界面。下载内容默认写入共享文件夹 downloads。网页经云吞网关打开，网关所在网络免 qBittorrent 登录；局域网只开放 BT 连接端口，WebUI 不直接暴露。下载完成会发一封通知邮件，经云吞的内部邮箱转进你的 Wonton 私聊；收件人只能填家里人的内部邮箱，外部地址发不出去。
     en: |
       qBittorrent is a full BitTorrent client: add magnet links or torrent files, watch progress and speed, and manage the queue.
 
-      The interface is VueTorrent — mobile friendly and installable as a PWA; you can switch back to the stock qBittorrent UI in its settings. Downloads go to the downloads shared folder by default. The WebUI is opened through the Wonton gateway, which is trusted without a second qBittorrent login; only the BitTorrent port is exposed on the LAN.
+      The interface is VueTorrent — mobile friendly and installable as a PWA; you can switch back to the stock qBittorrent UI in its settings. Downloads go to the downloads shared folder by default. The WebUI is opened through the Wonton gateway, which is trusted without a second qBittorrent login; only the BitTorrent port is exposed on the LAN. When a download finishes, a notification email is delivered to your Wonton chat via the internal mailbox; recipients must be household internal addresses — external ones are rejected.
   release_notes:
-    zh: 界面换成 VueTorrent：手机上好用、可安装成 PWA，qBittorrent 设置里可随时切回原版界面。
-    en: "The WebUI is now VueTorrent: mobile friendly, installable as a PWA, with the stock qBittorrent UI still one setting away."
+    zh: 下载完成的通知邮件接入云吞内部邮箱：装好即用，信转进你的 Wonton 私聊；收件人可在设置里改，只能填家里人的内部邮箱。
+    en: "Download-completion notifications now go through the internal mailbox and land in your Wonton chat, working out of the box; the recipient is configurable in settings (household internal addresses only)."
   webui:
     service: qbittorrent
     port: 8080
@@ -102,6 +107,8 @@ x-wonton:
       - { service: qbittorrent, port: 51413, protocol: udp }
   permissions:
     - storage.share.downloads:write
+    - notify
+    - owner.identity
     - network.egress
     - network.lan
   requirements:

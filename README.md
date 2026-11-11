@@ -17,6 +17,12 @@ VueTorrent 由 init 服务在安装和每次启动时从 [VueTorrent 官方发�
 
 设置过的选择会保留：init 服务只在配置里没有这两项时（老版本升级上来）补上默认值，不覆盖用户改过的值。
 
+## 通知邮件
+
+下载完成后 qBittorrent 会发一封通知邮件，经云吞的内部邮箱转进你的 Wonton 私聊，装好即用，不用填任何 SMTP 设置。收件人默认是你自己，在设置（VueTorrent 的 设置 → 下载，或原版界面）里可以改成家里其他人的内部邮箱；发给外部地址会被核心拒收，qBittorrent 在日志里报 `Email Notification Error`。
+
+init 服务只在配置里没有通知邮件这一段时（老版本升级上来）写入默认值；改过收件人或关掉通知的，重装不覆盖。
+
 ## 图标来源与许可
 
 `icon.svg` 使用 qBittorrent 官方标志；来源、处理方式、许可证全文和商标说明见 [NOTICE](NOTICE)。
