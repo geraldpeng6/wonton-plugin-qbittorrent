@@ -68,10 +68,10 @@ x-wonton:
   id: org.qbittorrent.qbittorrent
   version: 0.3.0
   kind: app
-  title: { zh: qBittorrent, en: qBittorrent }
+  title: { zh: BT 下载器（qBittorrent）, en: Torrent Downloader (qBittorrent) }
   description:
-    zh: 在家里的共享文件夹中下载和管理 BT 任务
-    en: Download and manage BitTorrent tasks in your home shared folder
+    zh: 像迅雷：贴上磁力链接或种子文件就开始下载，下完自动存进共享文件夹 downloads，并在云吞私聊里通知你。手机上的界面也好用。
+    en: "Like uTorrent on your home server: paste a magnet link or add a .torrent file, and it downloads into the downloads shared folder and lets you know in Wonton when it's done. The interface works well on phones too."
   icon: icon.svg
   notices: [NOTICE]
   screenshots: [screenshots/home.png]
