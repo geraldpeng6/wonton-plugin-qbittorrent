@@ -166,6 +166,7 @@ qbit_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私
 	core="$(qbit_core)" || return 1
 	dd="$(qbit_dd)"
 	dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	# shellcheck disable=SC2016 # 单引号里是子进程 bash 的变量，$1/$2/$3 是 bash -c 的位置参数
 	env SMOKE_CORE="$core" SMOKE_DATA_DIR="$dd" SMOKE_OWNER="${SMOKE_OWNER:-owner}" \
 		bash -c 'source "$1/lib.sh" && source "$1/probes.sh" && probes_owner_room_wait "$2" "$3"' \
 		_ "$dir" "$1" "$2"
@@ -175,7 +176,7 @@ extra_check() (
 	# 发信端到端：应用自己的「发送测试邮件」接口真发一封（收件人是 init 写进配置的主人内部邮箱），
 	# 核心投进主人私聊后从 Mailpit 取走删除
 	set -u
-	local web jar resp to out wp
+	local web jar to out wp code
 	web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
 	web="${web%/}"
 	jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
