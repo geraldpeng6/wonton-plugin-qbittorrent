@@ -159,50 +159,23 @@ qbit_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 pr
 	if declare -F read_env >/dev/null; then read_env WONTON_DATA_DIR; else probes_setting WONTON_DATA_DIR; fi
 }
 
-qbit_room_query() { # 用主人令牌读「Wonton」通知房最近消息（信被核心投进私聊的最终证据）。
-	# 主人令牌照核心自己的做法：管理令牌走 Tuwunel 的 impersonation 登录；都在核心容器里拿。
-	local core dd room admin srv otok
+qbit_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字。用套件 probes.sh 的
+	# probes_owner_room_wait（随 main 的 kit 同步修），在独立进程里跑，套件的 pass/fail 不盖进冒烟自己的 shell。
+	# 测试信没有随机的标记，文字用插件前缀；冒烟里 extra_check 是唯一发信方，开始后出现即可认。
+	local core dd dir
 	core="$(qbit_core)" || return 1
 	dd="$(qbit_dd)"
-	room="$(docker exec "$core" cat "$dd/core/matrix-notice-room")" ||
-		{ echo "读不到通知房记录（$dd/core/matrix-notice-room）"; return 1; }
-	admin="$(docker exec "$core" cat "$dd/core/matrix-admin-token")" ||
-		{ echo "读不到 Matrix 管理令牌"; return 1; }
-	srv="$(docker exec "$core" cat "$dd/../secrets/matrix-server-name")" ||
-		{ echo "读不到 Matrix 服务器名"; return 1; }
-	otok="$(docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
-		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $admin" -H 'Content-Type: application/json' -d '{}' \
-		"http://tuwunel.wonton.internal:8008/_synapse/admin/v1/users/@owner:$srv/login" | jq -er .access_token)" ||
-		{ echo "拿不到主人的 Matrix 令牌"; return 1; }
-	docker run --rm --network "container:$core" -e HTTP_PROXY= -e HTTPS_PROXY= -e http_proxy= -e https_proxy= -e NO_PROXY='*' \
-		curlimages/curl:8.23.0 -sS -H "Authorization: Bearer $otok" \
-		"http://tuwunel.wonton.internal:8008/_matrix/client/v3/rooms/$room/messages?dir=b&limit=20"
-}
-
-qbit_room_newest_ts() { # <前缀>：通知房里该插件最近一条邮件消息的 origin_server_ts（没有则 0）
-	local out
-	out="$(qbit_room_query)" || { echo 0; return 0; }
-	jq -r --arg p "$1" '[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p))) | .origin_server_ts] | max // 0' <<<"$out" 2>/dev/null || echo 0
-}
-
-qbit_room_wait() { # <前缀> <标记> <起始 ts> [次数=40]：等通知房里出现这条插件发的新邮件消息（投进私聊后一直都在）
-	local prefix="$1" marker="$2" since="$3" n="${4:-40}" i out hits
-	for ((i = 0; i < n; i++)); do
-		out="$(qbit_room_query)" || { sleep 2; continue; }
-		hits="$(jq -r --arg p "$prefix" --arg m "$marker" --argjson s "$since" '
-			[.chunk[]? | select(.type == "m.room.message" and (.content.body | startswith($p)) and .origin_server_ts > $s)
-			 | select($m == "" or (.content.body | contains($m)))] | length' <<<"$out" 2>/dev/null || echo 0)"
-		[[ "${hits:-0}" -ge 1 ]] && return 0
-		sleep 2
-	done
-	return 1
+	dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	env SMOKE_CORE="$core" SMOKE_DATA_DIR="$dd" SMOKE_OWNER="${SMOKE_OWNER:-owner}" \
+		bash -c 'source "$1/lib.sh" && source "$1/probes.sh" && probes_owner_room_wait "$2" "$3"' \
+		_ "$dir" "$1" "$2"
 }
 
 extra_check() (
 	# 发信端到端：应用自己的「发送测试邮件」接口真发一封（收件人是 init 写进配置的主人内部邮箱），
 	# 核心投进主人私聊后从 Mailpit 取走删除
 	set -u
-	local web jar resp to out
+	local web jar resp to out wp
 	web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
 	web="${web%/}"
 	jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
@@ -216,13 +189,12 @@ extra_check() (
 	# 触发一封真实测试信。
 	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
 	[ "$code" = 200 ] || { echo "sendTestEmail HTTP $code"; return 1; }
-	# 记下触发前该插件最近一封邮件消息的时间，之后只认更新的。
-	before="$(qbit_room_newest_ts "qBittorrent：")"
+	# 等待先挂后台再触发（模板的用法）：信进私聊是秒级投递，先等后发才等得到。
+	qbit_room_wait 120 "qBittorrent：" & wp=$!
 	# 触发一封真实测试信。
 	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
-	[ "$code" = 200 ] || { echo "sendTestEmail HTTP $code"; return 1; }
+	[ "$code" = 200 ] || { kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; echo "sendTestEmail HTTP $code"; return 1; }
 	# 核心把信投进主人的「Wonton」私聊：房里出现这一封。
-	qbit_room_wait "qBittorrent：" "" "$before" 40 ||
-		{ echo "测试信 80 秒没出现在主人的 Wonton 私聊：$(qbit_room_query | head -c 300)"; return 1; }
+	wait "$wp" || { echo "测试信 120 秒没出现在主人的 Wonton 私聊（房里没这封信）"; return 1; }
 	echo "测试信已进主人的 Wonton 私聊（qBittorrent：…，收件人 $to）"
 )
