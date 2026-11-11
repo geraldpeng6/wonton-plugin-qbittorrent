@@ -1,6 +1,6 @@
 # 云吞插件：qBittorrent
 
-开发流程见[插件开发指南](https://github.com/geraldpeng6/wonton-docs/blob/main/develop.md)。
+开发流程见[插件开发指南](https://github.com/wontonapp/wonton-docs/blob/main/develop.md)。
 
 云吞（Wonton）的 qBittorrent 插件：在共享文件夹 `downloads` 中下载和管理 BT 任务。网页经云吞网关访问，BT 连接端口按需开放到局域网。
 
