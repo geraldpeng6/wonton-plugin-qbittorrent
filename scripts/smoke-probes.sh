@@ -149,3 +149,66 @@ web_assert() {
   grep -qi 'VueTorrent' || return 1
   qbit_acceptance
 }
+
+# ---------- 通知邮件（notify，规范 0.11）----------
+qbit_core() { # 核心容器：Mailpit 的别名和 API 密码都在它的网络上/数据目录里
+	docker ps --format '{{.Names}}' | grep -xE "wonton-${SMOKE_INSTANCE:-}--core" | head -1
+}
+
+qbit_mailpit() { # <path>：调 Mailpit API（basic core:<密码>）。主路照核心自己的冒烟：在核心网络里
+	# 打 mailpit.wonton.internal:8025；兜底用应用容器的 wget（它的网络里也有这个别名）。
+	local core pw dd out webc
+	core="$(qbit_core)" || return 1
+	if declare -F read_env >/dev/null; then dd="$(read_env WONTON_DATA_DIR)"; else dd="$(probes_setting WONTON_DATA_DIR)"; fi
+	pw="$(docker exec "$core" cat "$dd/core/mailpit/api-password" 2>/dev/null)"
+	[ -n "${pw:-}" ] || { echo "读不到 Mailpit API 密码（核心数据目录 core/mailpit/api-password）"; return 1; }
+	out="$(docker run --rm --network "container:$core" curlimages/curl:8.23.0 \
+		-s -u "core:$pw" "http://mailpit.wonton.internal:8025$1" 2>&1)"
+	if jq -e '.messages' <<<"$out" >/dev/null 2>&1 || [[ "$out" == "{"* ]]; then
+		printf '%s' "$out"; return 0
+	fi
+	webc="$(docker ps --format '{{.Names}}' | grep "$SMOKE_INSTANCE" | grep 'qbittorrent' | head -1)"
+	[ -n "$webc" ] || { echo "Mailpit 主路没拿到 JSON：$(echo "$out" | head -c 200)"; return 1; }
+	docker exec "$webc" wget -qO- --header "Authorization: Basic $(printf 'core:%s' "$pw" | base64 | tr -d '\n')" \
+		"http://smtp.wonton.internal:8025$1" 2>&1
+}
+
+qbit_mailpit_wait() { # <jq 过滤> [次数=20]：轮询 Mailpit 直到过滤命中
+	local filt="$1" n="${2:-20}" i out
+	for ((i = 0; i < n; i++)); do
+		out="$(qbit_mailpit "/api/v1/messages?limit=100")" || { sleep 3; continue; }
+		jq -e "$filt" <<<"$out" >/dev/null 2>&1 && return 0
+		sleep 3
+	done
+	return 1
+}
+
+extra_check() (
+	# 发信端到端：应用自己的「发送测试邮件」接口真发一封（收件人是 init 写进配置的主人内部邮箱），
+	# 核心投进主人私聊后从 Mailpit 取走删除
+	set -u
+	local web jar resp to out
+	web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
+	web="${web%/}"
+	jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+	to="${SMOKE_OWNER:-owner}@wonton.internal"
+	qbit_session || { echo 'qBittorrent 插件网页会话登录失败'; return 1; }
+	# 配置里的通知邮件收件人应是主人的内部邮箱（init 服务写好的）。
+	out="$(curl -sS --noproxy '*' --fail-with-body -b "$jar" "$web/api/v2/app/preferences")" ||
+		{ echo "读偏好失败：$(echo "$out" | head -c 200)"; return 1; }
+	jq -e --arg to "$to" '.mail_notification_email == $to and .mail_notification_enabled == true' <<<"$out" >/dev/null ||
+		{ echo "通知邮件配置不对：$(jq -c '{mail_notification_enabled, mail_notification_email}' <<<"$out")"; return 1; }
+	# 触发一封真实测试信。
+	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
+	[ "$code" = 200 ] || { echo "sendTestEmail HTTP $code"; return 1; }
+	# 信进内部邮箱：From 是 WONTON_MAIL_FROM（org.qbittorrent.qbittorrent@plugins.wonton.internal）。
+	qbit_mailpit_wait "$(jq -n --arg to "$to" \
+		'.messages | any(.From.Address == "org.qbittorrent.qbittorrent@plugins.wonton.internal" and any(.To[].Address == $to))')" 20 ||
+		{ echo "测试信 60 秒没进 Mailpit：$(qbit_mailpit '/api/v1/messages?limit=5' | head -c 300)"; return 1; }
+	echo "测试信已进内部邮箱（To=$to）"
+	# 核心投进收件人私聊后把信从 Mailpit 删掉：信箱里没有这封信 = 已投递。
+	qbit_mailpit_wait "$(jq -n --arg to "$to" \
+		'(.messages | map(select(.To[].Address == $to)) | length) == 0')" 20 ||
+		{ echo "测试信一直留在 Mailpit：核心没把它投进主人私聊（投完才会删）"; return 1; }
+	echo "核心已把信投进主人的 Wonton 私聊（Mailpit 里已删除）"
+)
