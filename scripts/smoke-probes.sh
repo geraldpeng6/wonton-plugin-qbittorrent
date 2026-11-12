@@ -152,7 +152,7 @@ web_assert() {
 # ---------- 通知邮件（notify，规范 0.11）----------
 qbit_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字（套件助手读
 	# SMOKE_CORE/SMOKE_DATA_DIR/SMOKE_OWNER，都在探针环境里）。测试信没有随机的标记，文字用
-	# 插件前缀；冒烟里 extra_check 是唯一发信方，等待开始后出现即可认。
+	# 应用名；冒烟里 extra_check 是唯一发信方，等待开始后出现即可认。
 	probes_owner_room_wait "$1" "$2"
 }
 
@@ -170,15 +170,14 @@ extra_check() (
 		{ echo "读偏好失败：$(echo "$out" | head -c 200)"; return 1; }
 	jq -e --arg to "$to" '.mail_notification_email == $to and .mail_notification_enabled == true' <<<"$out" >/dev/null ||
 		{ echo "通知邮件配置不对：$(jq -c '{mail_notification_enabled, mail_notification_email}' <<<"$out")"; return 1; }
-	# 触发一封真实测试信。
-	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
-	[ "$code" = 200 ] || { echo "sendTestEmail HTTP $code"; return 1; }
 	# 等待先挂后台再触发（模板的用法）：信进私聊是秒级投递，先等后发才等得到。
-	qbit_room_wait 120 "qBittorrent：" & wp=$!
+	# 按应用名找，不带前缀的冒号：核心给消息加的前缀是应用的显示名（“BT 下载器（qBittorrent）：”），
+	# 写死整段前缀会随改名对不上。
+	qbit_room_wait 120 "qBittorrent" & wp=$!
 	# 触发一封真实测试信。
 	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
 	[ "$code" = 200 ] || { kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; echo "sendTestEmail HTTP $code"; return 1; }
 	# 核心把信投进主人的「Wonton」私聊：房里出现这一封。
 	wait "$wp" || { echo "测试信 120 秒没出现在主人的 Wonton 私聊（房里没这封信）"; return 1; }
-	echo "测试信已进主人的 Wonton 私聊（qBittorrent：…，收件人 $to）"
+	echo "测试信已进主人的 Wonton 私聊（收件人 $to）"
 )
