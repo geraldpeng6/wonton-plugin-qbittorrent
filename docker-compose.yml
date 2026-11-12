@@ -66,6 +66,10 @@ configs:
 x-wonton:
   spec: "0.11"
   id: org.qbittorrent.qbittorrent
+  # 向其他插件提供下载器能力：经核心网络别名 torrent_client.wonton.internal 转发的
+  # qBittorrent Web API v2（/api/v2/）请求免凭据（认证白名单只放核心地址）。
+  provides:
+    torrent_client: { service: qbittorrent, port: 8080 }
   version: 0.3.0
   kind: app
   title: { zh: BT 下载器（qBittorrent）, en: Torrent Downloader (qBittorrent) }
@@ -91,8 +95,8 @@ x-wonton:
 
       The interface is VueTorrent — mobile friendly and installable as a PWA; you can switch back to the stock qBittorrent UI in its settings. Downloads go to the downloads shared folder by default. The WebUI is opened through the Wonton gateway, which is trusted without a second qBittorrent login; only the BitTorrent port is exposed on the LAN. When a download finishes, a notification email is delivered to your Wonton chat via the internal mailbox; recipients must be household internal addresses — external ones are rejected.
   release_notes:
-    zh: 下载完成的通知邮件接入云吞内部邮箱：装好即用，信转进你的 Wonton 私聊；收件人可在设置里改，只能填家里人的内部邮箱。
-    en: "Download-completion notifications now go through the internal mailbox and land in your Wonton chat, working out of the box; the recipient is configurable in settings (household internal addresses only)."
+    zh: 开始向其他插件提供下载器能力：自动追番这类插件装上即配好下载器，不用再填地址。下载完成的通知邮件接入云吞内部邮箱：装好即用，信转进你的 Wonton 私聊；收件人可在设置里改，只能填家里人的内部邮箱。
+    en: "Now provides the torrent_client capability: plugins like the anime auto-downloader get the downloader pre-configured, no address to fill in. Download-completion notifications go through the internal mailbox and land in your Wonton chat, working out of the box; the recipient is configurable in settings (household internal addresses only)."
   webui:
     service: qbittorrent
     port: 8080
