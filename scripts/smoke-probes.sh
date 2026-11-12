@@ -8,13 +8,12 @@ qbit_session() (
   # 会话有效就直接用；失效时用核心登录变量重建。qBittorrent 不认 Remote-User，免登录靠网关来源白名单。
   set -u
   local web jar
-  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
-  web="${web%/}"   # 套件导出的 web_url 带尾斜杠，拼出来会得到 //api/v2/...，qBittorrent 回 404
-  jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+  web="${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}"
+  jar="${SMOKE_JAR:?SMOKE_JAR 未导出}"
   curl -fsS --noproxy '*' -b "$jar" "$web/api/v2/app/version" >/dev/null 2>&1 && return 0
   local token base
-  token="${E2E_TOKEN:-${SMOKE_TOKEN:-}}"
-  base="${E2E_BASE:-${SMOKE_BASE:-}}"
+  token="${SMOKE_TOKEN:-}"
+  base="${SMOKE_BASE:-}"
   if [ -z "$token" ] || [ -z "$base" ]; then
     echo 'qBittorrent 插件会话失效，且没有核心登录变量'; return 1
   fi
@@ -30,9 +29,8 @@ qbit_session() (
 data_write() (
   set -eu
   local web jar code
-  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
-  web="${web%/}"   # 套件导出的 web_url 带尾斜杠，拼出来会得到 //api/v2/...，qBittorrent 回 404
-  jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+  web="${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}"
+  jar="${SMOKE_JAR:?SMOKE_JAR 未导出}"
   qbit_session || return 1
   # 先删旧标记再建，冒烟重跑不残留。
   curl -sS --noproxy '*' -b "$jar" -X POST --data-urlencode 'categories=wonton-smoke' \
@@ -47,9 +45,8 @@ data_write() (
 data_check() (
   set -eu
   local web jar cats
-  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
-  web="${web%/}"   # 套件导出的 web_url 带尾斜杠，拼出来会得到 //api/v2/...，qBittorrent 回 404
-  jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+  web="${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}"
+  jar="${SMOKE_JAR:?SMOKE_JAR 未导出}"
   qbit_session || return 1
   cats="$(curl -sS --noproxy '*' --fail-with-body -b "$jar" "$web/api/v2/torrents/categories")" || {
     echo "读分类失败：${cats:-（空响应）}"; return 1; }
@@ -60,17 +57,17 @@ data_check() (
 
 qbit_acceptance() (
   set -u
-  local web jar dir share swork index torrent_name torrent_file info item hash name
+  local web jar core share swork index torrent_name torrent_file info item hash name
   local downloaded speed speed_seen=0 download_file=""
-  web="${E2E_WEB_URL:-${SMOKE_WEB_URL:-}}"
-  web="${web%/}"   # 网关 web_url 带尾斜杠，直接拼会得到 //api/v2/...，qBittorrent 回 404 Not Found
-  jar="${E2E_JAR:-${SMOKE_JAR:-}}"
-  dir="${E2E_DIR:-${SMOKE_DIR:-}}"
-  share="$dir/.wonton/data/shares/downloads"
+  web="${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}"
+  jar="${SMOKE_JAR:?SMOKE_JAR 未导出}"
+  core="${SMOKE_CORE:?SMOKE_CORE 未导出}"
+  # downloads 共享目录在核心容器的数据目录里，探针从那里核对文件落位（宿主没有实例数据路径）。
+  share="$SMOKE_DATA_DIR/shares/downloads"
   swork="${TMPDIR:-/tmp}/wonton-qbittorrent-smoke.$$"
   hash=""
   mkdir -p "$swork"
-  # shellcheck disable=SC2317 # trap 回调，shellcheck 看不到调用点
+  # shellcheck disable=SC2317,SC2329 # trap 回调，shellcheck 看不到调用点
   cleanup() {
     local cleanup_hashes="${hash:-}"
     if [ -z "$cleanup_hashes" ]; then
@@ -122,8 +119,8 @@ qbit_acceptance() (
     echo "Debian torrent 未达到 2 MiB 且未观察到下载速度（downloaded=${downloaded:-0}, dlspeed=${speed:-0}）"; return 1
   fi
 
-  download_file="$(find "$share" -type f -iname '*netinst*' -print -quit 2>/dev/null || true)"
-  if [ -z "$download_file" ] || [ ! -f "$download_file" ]; then
+  download_file="$(docker exec "$core" find "$share" -type f -iname '*netinst*' -print -quit 2>/dev/null || true)"
+  if [ -z "$download_file" ] || ! docker exec "$core" test -f "$download_file"; then
     echo "下载文件不在 downloads 共享文件夹：$share"; return 1
   fi
 
@@ -138,10 +135,12 @@ qbit_acceptance() (
   done
   hash=""
   for _ in $(seq 1 30); do
-    [ ! -e "$download_file" ] && break
+    docker exec "$core" test -e "$download_file" 2>/dev/null || break
     sleep 1
   done
-  [ ! -e "$download_file" ] || { echo "删除 torrent 后文件仍在：$download_file"; return 1; }
+  if docker exec "$core" test -e "$download_file" 2>/dev/null; then
+    echo "删除 torrent 后文件仍在：$download_file"; return 1
+  fi
   echo "Debian netinst torrent 下载达到 ${downloaded} 字节且观察到速度，文件已删除：$name"
 )
 
@@ -151,25 +150,10 @@ web_assert() {
 }
 
 # ---------- 通知邮件（notify，规范 0.11）----------
-qbit_core() { # 核心容器：通知房记录、Matrix 令牌和 Tuwunel 都在它的数据目录/网络上
-	docker ps --format '{{.Names}}' | grep -xE "wonton-${SMOKE_INSTANCE:-}--core" | head -1
-}
-
-qbit_dd() { # 核心数据目录（e2e 冒烟有 read_env；dev.sh probes 用 probes_setting）
-	if declare -F read_env >/dev/null; then read_env WONTON_DATA_DIR; else probes_setting WONTON_DATA_DIR; fi
-}
-
-qbit_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字。用套件 probes.sh 的
-	# probes_owner_room_wait（随 main 的 kit 同步修），在独立进程里跑，套件的 pass/fail 不盖进冒烟自己的 shell。
-	# 测试信没有随机的标记，文字用插件前缀；冒烟里 extra_check 是唯一发信方，开始后出现即可认。
-	local core dd pdir
-	core="$(qbit_core)" || return 1
-	dd="$(qbit_dd)"
-	pdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	# shellcheck disable=SC2016 # 单引号里是子进程 bash 的变量，$1/$2/$3 是 bash -c 的位置参数
-	env SMOKE_CORE="$core" SMOKE_DATA_DIR="$dd" SMOKE_OWNER="${SMOKE_OWNER:-owner}" \
-		bash -c 'date() { [[ "${1:-}" == "+%s" ]] && command date -d "@$(( $(command date +%s) - 300 ))" +%s || command date "\$@"; }; source "$1/lib.sh" && source "$1/probes.sh" && probes_owner_room_wait "$2" "$3"' \
-		_ "$pdir" "$1" "$2"
+qbit_room_wait() { # <超时秒> <要找的文字>：等主人的「Wonton」私聊出现这段文字（套件助手读
+	# SMOKE_CORE/SMOKE_DATA_DIR/SMOKE_OWNER，都在探针环境里）。测试信没有随机的标记，文字用
+	# 应用名；冒烟里 extra_check 是唯一发信方，等待开始后出现即可认。
+	probes_owner_room_wait "$1" "$2"
 }
 
 extra_check() (
@@ -177,9 +161,8 @@ extra_check() (
 	# 核心投进主人私聊后从 Mailpit 取走删除
 	set -u
 	local web jar to out wp code
-	web="${E2E_WEB_URL:-${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}}"
-	web="${web%/}"
-	jar="${E2E_JAR:-${SMOKE_JAR:?SMOKE_JAR 未导出}}"
+	web="${SMOKE_WEB_URL:?SMOKE_WEB_URL 未导出}"
+	jar="${SMOKE_JAR:?SMOKE_JAR 未导出}"
 	to="${SMOKE_OWNER:-owner}@wonton.internal"
 	qbit_session || { echo 'qBittorrent 插件网页会话登录失败'; return 1; }
 	# 配置里的通知邮件收件人应是主人的内部邮箱（init 服务写好的）。
@@ -187,15 +170,14 @@ extra_check() (
 		{ echo "读偏好失败：$(echo "$out" | head -c 200)"; return 1; }
 	jq -e --arg to "$to" '.mail_notification_email == $to and .mail_notification_enabled == true' <<<"$out" >/dev/null ||
 		{ echo "通知邮件配置不对：$(jq -c '{mail_notification_enabled, mail_notification_email}' <<<"$out")"; return 1; }
-	# 触发一封真实测试信。
-	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
-	[ "$code" = 200 ] || { echo "sendTestEmail HTTP $code"; return 1; }
 	# 等待先挂后台再触发（模板的用法）：信进私聊是秒级投递，先等后发才等得到。
-	qbit_room_wait 120 "qBittorrent：" & wp=$!
+	# 按应用名找，不带前缀的冒号：核心给消息加的前缀是应用的显示名（“BT 下载器（qBittorrent）：”），
+	# 写死整段前缀会随改名对不上。
+	qbit_room_wait 120 "qBittorrent" & wp=$!
 	# 触发一封真实测试信。
 	code="$(curl -sS --noproxy '*' -b "$jar" -o /dev/null -w '%{http_code}' -X POST "$web/api/v2/app/sendTestEmail")"
 	[ "$code" = 200 ] || { kill "$wp" 2>/dev/null; wait "$wp" 2>/dev/null; echo "sendTestEmail HTTP $code"; return 1; }
 	# 核心把信投进主人的「Wonton」私聊：房里出现这一封。
 	wait "$wp" || { echo "测试信 120 秒没出现在主人的 Wonton 私聊（房里没这封信）"; return 1; }
-	echo "测试信已进主人的 Wonton 私聊（qBittorrent：…，收件人 $to）"
+	echo "测试信已进主人的 Wonton 私聊（收件人 $to）"
 )
